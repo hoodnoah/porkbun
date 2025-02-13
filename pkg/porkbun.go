@@ -90,6 +90,16 @@ func NewPorkbun(apiKey string, secretKey string) *PorkBun {
 	}
 }
 
+// setter for the porkbun API Key
+func (p *PorkBun) SetAPIKey(apikey string) {
+	p.apiKey = apikey
+}
+
+// setter for the porkbun Secret Key
+func (p *PorkBun) SetSecretKey(secretKey string) {
+	p.secretKey = secretKey
+}
+
 // Creates a new DNS entry by name and type (subdomain, record type).
 // Only TXT records currently supported.
 func (p *PorkBun) CreateDNSByNameType(domain string, subdomain string, content string) error {
