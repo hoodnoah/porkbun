@@ -57,14 +57,24 @@ func (d *DNSDeleteResponse) Decode(decoder *json.Decoder) error {
 	return decoder.Decode(d)
 }
 
+type DNSRecord struct {
+	ID         json.Number `json:"id"`
+	Name       string      `json:"name"`
+	RecordType string      `json:"type"`
+	Content    string      `json:"content"`
+	TTL        string      `json:"ttl"`
+	Priority   string      `json:"prio"`
+	Notes      string      `json:"notes"`
+}
+
 type dnsRetrieveArgs struct {
 	APIKey    string `json:"apikey"`
 	SecretKey string `json:"secretapikey"`
 }
 
 type dnsRetrieveResponse struct {
-	Status  string     `json:"status"`
-	Records []struct{} `json:"records"`
+	Status  string      `json:"status"`
+	Records []DNSRecord `json:"records"`
 }
 
 func (d *dnsRetrieveResponse) Decode(decoder *json.Decoder) error {
@@ -159,6 +169,37 @@ func (p *PorkBun) DeleteDNSByNameType(domain string, subdomain string) error {
 	}
 
 	return nil
+}
+
+// Fetches and returns a list of DNS records by domain, subdomain
+// only TXT records supported.
+// Returns an empty list in the event there are no records for the given domain
+func (p *PorkBun) RetrieveDNSByNameType(domain string, subdomain string) ([]DNSRecord, error) {
+	url := fmt.Sprintf(dnsRetrieveNameTypeURL, domain, subdomain)
+
+	// create request body
+	args := dnsRetrieveArgs{
+		APIKey:    p.apiKey,
+		SecretKey: p.secretKey,
+	}
+	bodyBytes, err := json.Marshal(args)
+	if err != nil {
+		return nil, err
+	}
+	bodyBuffer := bytes.NewBuffer(bodyBytes)
+
+	// submit the request
+	var response dnsRetrieveResponse
+	err = p.submitRequest(url, bodyBuffer, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.ToLower(response.Status) != "success" {
+		return nil, fmt.Errorf("failed to retrieve DNS records with status %s", response.Status)
+	}
+
+	return response.Records, nil
 }
 
 // determines if a record exists; true if it does, false if it doesn't
