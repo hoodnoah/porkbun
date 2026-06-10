@@ -14,6 +14,7 @@ const (
 	dnsRetrieveNameTypeURL = "https://api.porkbun.com/api/json/v3/dns/retrieveByNameType/%s/TXT/%s" // append domain name, subdomain (optional)
 	dnsCreateURL           = "https://api.porkbun.com/api/json/v3/dns/create/%s"                    // append domain name
 	dnsDeleteNameTypeURL   = "https://api.porkbun.com/api/json/v3/dns/deleteByNameType/%s/TXT/%s"   // append domain name, subdomain (optional)
+	dnsDeleteByIDURL       = "https://api.porkbun.com/api/json/v3/dns/delete/%s/%s"                 // append domain name, record ID
 )
 
 type IDecodable interface {
@@ -102,19 +103,14 @@ func (p *PorkBun) SetSecretKey(secretKey string) {
 
 // Creates a new DNS entry by name and type (subdomain, record type).
 // Only TXT records currently supported.
+//
+// NOTE: this method unconditionally creates the record. Multiple TXT records
+// with the same name but different content are valid and REQUIRED for ACME
+// DNS01 (e.g. an apex + wildcard certificate produces two challenges at the
+// same FQDN). Content-aware deduplication is the caller's responsibility.
+// The previous name-only existence check made the second create at a given
+// name a silent no-op, which broke exactly that scenario.
 func (p *PorkBun) CreateDNSByNameType(domain string, subdomain string, content string) error {
-	// check if record exists before trying to create it
-	recordExists, err := p.recordExists(domain, subdomain)
-	if err != nil {
-		return err
-	}
-
-	// terminate early if it exists
-	if recordExists {
-		return nil
-	}
-
-	// record doesn't exist, create it
 	createUrl := fmt.Sprintf(dnsCreateURL, domain)
 
 	createArgs := DNSCreateNameTypeArgs{
@@ -146,6 +142,11 @@ func (p *PorkBun) CreateDNSByNameType(domain string, subdomain string, content s
 
 // Deletes a DNS entry by name and type (subdomain, record type).
 // Only TXT records currently supported.
+//
+// WARNING: Porkbun's deleteByNameType endpoint deletes ALL records with the
+// given name and type, regardless of content. To delete a single specific
+// record, retrieve records with RetrieveDNSByNameType, match on content,
+// and use DeleteDNSByID with the matched record's ID.
 func (p *PorkBun) DeleteDNSByNameType(domain string, subdomain string) error {
 	// check if the record exists
 	recordExists, err := p.recordExists(domain, subdomain)
@@ -176,6 +177,33 @@ func (p *PorkBun) DeleteDNSByNameType(domain string, subdomain string) error {
 
 	if strings.ToLower(deleteResponse.Status) != "success" {
 		return fmt.Errorf("failed to submit delete request with status %s", deleteResponse.Status)
+	}
+
+	return nil
+}
+
+// Deletes a single DNS record by its Porkbun record ID.
+// Unlike DeleteDNSByNameType, this affects exactly one record, making it
+// safe when multiple records share a name (e.g. concurrent ACME challenges).
+func (p *PorkBun) DeleteDNSByID(domain string, id string) error {
+	deleteUrl := fmt.Sprintf(dnsDeleteByIDURL, domain, id)
+	deleteArgs := DNSDeleteNameTypeArgs{
+		APIKey:    p.apiKey,
+		SecretKey: p.secretKey,
+	}
+	bodyBytes, err := json.Marshal(deleteArgs)
+	if err != nil {
+		return err
+	}
+	bodyBuffer := bytes.NewBuffer(bodyBytes)
+
+	var deleteResponse DNSDeleteResponse
+	if err = p.submitRequest(deleteUrl, bodyBuffer, &deleteResponse); err != nil {
+		return err
+	}
+
+	if strings.ToLower(deleteResponse.Status) != "success" {
+		return fmt.Errorf("failed to submit delete-by-id request with status %s", deleteResponse.Status)
 	}
 
 	return nil
@@ -261,6 +289,9 @@ func (p *PorkBun) submitRequest(url string, bodyBuffer *bytes.Buffer, returnStru
 	if err != nil {
 		return err
 	}
+	// close the body once handled; without this, every API call leaks the
+	// connection, which matters in a long-running webhook process
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
