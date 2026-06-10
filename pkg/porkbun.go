@@ -85,7 +85,11 @@ func (d *dnsRetrieveResponse) Decode(decoder *json.Decoder) error {
 // constructor for porkbun struct
 func NewPorkbun(apiKey string, secretKey string) *PorkBun {
 	return &PorkBun{
-		httpClient: http.Client{Timeout: 10 * time.Second},
+		// ACME challenge handling is latency-tolerant (cert-manager waits
+		// minutes), so a generous timeout is correct here: a 10s ceiling
+		// turns a single transient DNS stall (~5s on clusters with the
+		// UDP conntrack race) into a hard failure for no benefit.
+		httpClient: http.Client{Timeout: 30 * time.Second},
 		apiKey:     apiKey,
 		secretKey:  secretKey,
 	}
